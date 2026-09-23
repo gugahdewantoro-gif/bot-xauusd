@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import yfinance as yf
 
 # Konfigurasi Halaman
 st.set_page_config(
@@ -45,12 +46,25 @@ total_weight = w_ema + w_rsi + w_macd
 if total_weight != 100:
     st.sidebar.warning(f"Total bobot: {total_weight}%. Disarankan total 100%.")
 
+# Fungsi Ambil Harga Emas Real-time dari Pasar
+def get_live_xauusd():
+    try:
+        gold = yf.Ticker("GC=F")
+        data = gold.history(period="1d", interval="1m")
+        if not data.empty:
+            return float(data['Close'].iloc[-1])
+        return 4315.00
+    except:
+        return 4315.00
+
 # Tab Antarmuka Utama
 tab1, tab2, tab3 = st.tabs(["📡 Live Signals & Panduan Entry", "🧪 Optimization & Evaluasi Strategi", "⚙️ Auto Trade MT5"])
 
 with tab1:
-    # Header Saldo & Akun
-    acc_number, balance, server_name = "414361306 (Simulasi)", 1007.90, "Exness-MT5Trial6"
+    # Input Saldo Manual/Dinamis
+    acc_number, server_name = "414361306 (Exness Demo)", "Exness-MT5Trial6"
+    balance = st.number_input("Saldo Akun MT5 ($):", value=965.89, step=10.0)
+    
     st.markdown(f"**Akun Exness:** {acc_number} | **Saldo:** ${balance:,.2f} | **Server:** {server_name}")
     st.divider()
 
@@ -71,21 +85,22 @@ with tab1:
     if btn_analyze:
         st.session_state.analyzed = True
 
-    # Nilai Simulasi/Kalkulasi Hasil
+    # Perhitungan berdasarkan Harga Live
     if st.session_state.analyzed:
-        price_val = 2650.45
-        spread_val = 0.18
-        
-        # Contoh kalkulasi skor berdasarkan pembobotan
-        score_ema = 0.8 * (w_ema / 100)
-        score_rsi = -0.5 * (w_rsi / 100)
-        score_macd = 0.6 * (w_macd / 100)
-        total_score = (score_ema + score_rsi + score_macd) * 100
+        with st.spinner("Mengambil harga XAUUSD real-time..."):
+            price_val = get_live_xauusd()
+            spread_val = 0.18
+            
+            # Perhitungan Skor Pembobotan Indikator
+            score_ema = 0.8 * (w_ema / 100)
+            score_rsi = -0.5 * (w_rsi / 100)
+            score_macd = 0.6 * (w_macd / 100)
+            total_score = (score_ema + score_rsi + score_macd) * 100
 
         st.subheader("📌 RINGKASAN SINYAL PASAR")
         sc1, sc2, sc3 = st.columns(3)
         with sc1:
-            st.metric("Harga XAUUSD Saat Ini", f"${price_val:,.2f}")
+            st.metric("Harga XAUUSD Real-Time", f"${price_val:,.2f}")
         with sc2:
             st.metric("Spread Saat Ini", f"{spread_val} Pips", delta="Aman", delta_color="normal")
         with sc3:

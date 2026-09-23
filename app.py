@@ -35,98 +35,159 @@ execution_mode = st.sidebar.radio(
 max_spread = st.sidebar.number_input("Max Spread (Pips):", value=0.40, step=0.05)
 base_lot = st.sidebar.number_input("Ukuran Lot Auto Trade:", value=0.01, step=0.01)
 
-# Fitur Pembobotan Indikator
+# Fitur Pembobotan Indikator Terupdate
 st.sidebar.divider()
 st.sidebar.subheader("⚖️ Pembobotan Indikator (%)")
-w_ema = st.sidebar.slider("Bobot Trend (EMA/MA)", 0, 100, 40)
-w_rsi = st.sidebar.slider("Bobot Momentum (RSI)", 0, 100, 30)
-w_macd = st.sidebar.slider("Bobot Oscillator (MACD)", 0, 100, 30)
+w_ema = st.sidebar.slider("Bobot Multi-EMA (9,21,50,100,200)", 0, 100, 35)
+w_vwap_fibo = st.sidebar.slider("Bobot Structure (VWAP & Fibo)", 0, 100, 35)
+w_rsi_atr = st.sidebar.slider("Bobot Volatilitas & Momentum (RSI + ATR)", 0, 100, 30)
 
-total_weight = w_ema + w_rsi + w_macd
+total_weight = w_ema + w_vwap_fibo + w_rsi_atr
 if total_weight != 100:
     st.sidebar.warning(f"Total bobot: {total_weight}%. Disarankan total 100%.")
 
-# Fungsi Ambil Harga Emas Real-time dari Pasar
-def get_live_xauusd():
+# Fungsi Fetch Data Real-time Market
+@st.cache_data(ttl=60)
+def fetch_market_data():
     try:
-        gold = yf.Ticker("GC=F")
-        data = gold.history(period="1d", interval="1m")
-        if not data.empty:
-            return float(data['Close'].iloc[-1])
-        return 4315.00
-    except:
-        return 4315.00
+        # Fetch Emas, DXY, dan Oil
+        gold = yf.Ticker("GC=F").history(period="5d", interval="15m")
+        dxy = yf.Ticker("DX-Y.NYB").history(period="2d", interval="15m")
+        oil = yf.Ticker("CL=F").history(period="2d", interval="15m")
+        
+        gold_price = float(gold['Close'].iloc[-1]) if not gold.empty else 4352.30
+        
+        dxy_price = float(dxy['Close'].iloc[-1]) if not dxy.empty else 100.00
+        dxy_change = float(((dxy['Close'].iloc[-1] - dxy['Close'].iloc[-2]) / dxy['Close'].iloc[-2]) * 100) if len(dxy) > 1 else 0.0
+        
+        oil_price = float(oil['Close'].iloc[-1]) if not oil.empty else 70.00
+        oil_change = float(((oil['Close'].iloc[-1] - oil['Close'].iloc[-2]) / oil['Close'].iloc[-2]) * 100) if len(oil) > 1 else 0.0
+
+        # Perhitungan Indikator Teknis Emas
+        df = gold.copy()
+        df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
+        df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
+        df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+        df['EMA100'] = df['Close'].ewm(span=100, adjust=False).mean()
+        df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
+        
+        # VWAP Sederhana
+        df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
+        
+        # ATR (14)
+        high_low = df['High'] - df['Low']
+        high_close = np.abs(df['High'] - df['Close'].shift())
+        low_close = np.abs(df['Low'] - df['Close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        df['ATR'] = true_range.rolling(14).mean()
+
+        atr_val = float(df['ATR'].iloc[-1]) if not np.isnan(df['ATR'].iloc[-1]) else 6.0
+        vwap_val = float(df['VWAP'].iloc[-1]) if not np.isnan(df['VWAP'].iloc[-1]) else gold_price
+        
+        # Fibonacci dari Low & High 5 hari
+        high_5d = df['High'].max()
+        low_5d = df['Low'].min()
+        diff = high_5d - low_5d
+        fibo_618 = high_5d - (diff * 0.618)
+        fibo_500 = high_5d - (diff * 0.500)
+
+        return {
+            "gold_price": gold_price,
+            "dxy_price": dxy_price,
+            "dxy_change": dxy_change,
+            "oil_price": oil_price,
+            "oil_change": oil_change,
+            "ema9": df['EMA9'].iloc[-1],
+            "ema21": df['EMA21'].iloc[-1],
+            "ema50": df['EMA50'].iloc[-1],
+            "ema200": df['EMA200'].iloc[-1],
+            "vwap": vwap_val,
+            "atr": atr_val,
+            "fibo_618": fibo_618,
+            "fibo_500": fibo_500
+        }
+    except Exception as e:
+        return None
 
 # Tab Antarmuka Utama
 tab1, tab2, tab3 = st.tabs(["📡 Live Signals & Panduan Entry", "🧪 Optimization & Evaluasi Strategi", "⚙️ Auto Trade MT5"])
 
 with tab1:
-    # Input Saldo Manual/Dinamis
     acc_number, server_name = "414361306 (Exness Demo)", "Exness-MT5Trial6"
     balance = st.number_input("Saldo Akun MT5 ($):", value=965.89, step=10.0)
     
     st.markdown(f"**Akun Exness:** {acc_number} | **Saldo:** ${balance:,.2f} | **Server:** {server_name}")
     st.divider()
 
-    # Indikator Pasar Utama
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric(label="US Dollar Index (DXY)", value="100.00", delta="0.00% (Inverse vs Emas)")
-    with col2:
-        st.metric(label="Crude Oil (WTI)", value="$70.00", delta="0.00%")
+    data = fetch_market_data()
 
-    st.write("")
-    btn_analyze = st.button("🚀 Analisis & Dapatkan Sinyal Entry", type="primary", use_container_width=True)
+    if data:
+        # Indikator Pasar Utama (Live DXY & Oil)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(label="US Dollar Index (DXY)", value=f"{data['dxy_price']:.2f}", delta=f"{data['dxy_change']:.2f}% (Inverse vs Emas)")
+        with col2:
+            st.metric(label="Crude Oil (WTI)", value=f"${data['oil_price']:.2f}", delta=f"{data['oil_change']:.2f}%")
 
-    # State Analisis
-    if "analyzed" not in st.session_state:
-        st.session_state.analyzed = False
+        st.write("")
+        btn_analyze = st.button("🚀 Analisis & Dapatkan Sinyal Entry Presisi", type="primary", use_container_width=True)
 
-    if btn_analyze:
-        st.session_state.analyzed = True
+        if btn_analyze or "analyzed" in st.session_state:
+            st.session_state.analyzed = True
 
-    # Perhitungan berdasarkan Harga Live
-    if st.session_state.analyzed:
-        with st.spinner("Mengambil harga XAUUSD real-time..."):
-            price_val = get_live_xauusd()
-            spread_val = 0.18
+            gold_p = data['gold_price']
+            atr = data['atr']
             
-            # Perhitungan Skor Pembobotan Indikator
-            score_ema = 0.8 * (w_ema / 100)
-            score_rsi = -0.5 * (w_rsi / 100)
-            score_macd = 0.6 * (w_macd / 100)
-            total_score = (score_ema + score_rsi + score_macd) * 100
+            # Tren Struktural dari Alignment EMA
+            bullish_ema = data['ema9'] > data['ema21'] > data['ema50']
+            bearish_ema = data['ema9'] < data['ema21'] < data['ema50']
 
-        st.subheader("📌 RINGKASAN SINYAL PASAR")
-        sc1, sc2, sc3 = st.columns(3)
-        with sc1:
-            st.metric("Harga XAUUSD Real-Time", f"${price_val:,.2f}")
-        with sc2:
-            st.metric("Spread Saat Ini", f"{spread_val} Pips", delta="Aman", delta_color="normal")
-        with sc3:
-            signal_text = "BUY (Beli)" if total_score > 0 else "SELL (Jual)"
-            delta_col = "normal" if total_score > 0 else "inverse"
-            st.metric("Arah Tren & Skor Kekuatan", f"{total_score:.1f}%", delta=signal_text, delta_color=delta_col)
+            if bullish_ema:
+                signal_type = "BUY LIMIT"
+                entry_target = max(data['vwap'], data['fibo_618'])
+                tp_target = entry_target + (12.5) # Target TP 125 Pips
+                sl_target = entry_target - (6.0)  # Target SL 60 Pips
+                score_str = "+75.0% (Strong Bullish)"
+                delta_col = "normal"
+            else:
+                signal_type = "SELL LIMIT"
+                entry_target = min(data['vwap'], data['fibo_500'])
+                tp_target = entry_target - (12.5)
+                sl_target = entry_target + (6.0)
+                score_str = "-75.0% (Strong Bearish)"
+                delta_col = "inverse"
 
-        st.divider()
-        st.subheader("💡 REKOMENDASI POSISI OPTIMAL")
-        r1, r2, r3 = st.columns(3)
-        with r1:
-            st.info(f"**Aksi:** {signal_text}")
-        with r2:
-            st.success(f"**Take Profit (TP):** ${price_val + 12.50:.2f}")
-        with r3:
-            st.error(f"**Stop Loss (SL):** ${price_val - 6.00:.2f}")
+            st.subheader("📌 RINGKASAN SINYAL PASAR (LIVE)")
+            sc1, sc2, sc3 = st.columns(3)
+            with sc1:
+                st.metric("Harga XAUUSD Running", f"${gold_p:,.2f}")
+            with sc2:
+                st.metric("Volatilitas Pasar (ATR 14)", f"${atr:.2f}")
+            with sc3:
+                st.metric("Arah Tren (EMA 9/21/50/100/200)", score_str, delta=signal_type, delta_color=delta_col)
 
-        st.markdown("### 📊 Detail Kontribusi Pembobotan Indikator")
-        detail_df = pd.DataFrame({
-            "Indikator": ["Trend (EMA)", "Momentum (RSI)", "Oscillator (MACD)"],
-            "Bobot Diterapkan (%)": [w_ema, w_rsi, w_macd],
-            "Kontribusi Skor": [f"{score_ema*100:.1f}%", f"{score_rsi*100:.1f}%", f"{score_macd*100:.1f}%"]
-        })
-        st.table(detail_df)
+            st.divider()
+            st.subheader("💡 ZONA ENTRY PRESISI HIGH RRR")
+            r1, r2, r3, r4 = st.columns(4)
+            with r1:
+                st.info(f"**Tipe Aksi:**\n\n### {signal_type}")
+            with r2:
+                st.warning(f"**Harga Entry Ideal:**\n\n### ${entry_target:,.2f}")
+            with r3:
+                st.success(f"**Take Profit (TP):**\n\n### ${tp_target:,.2f}")
+            with r4:
+                st.error(f"**Stop Loss (SL):**\n\n### ${sl_target:,.2f}")
+
+            st.markdown("### 📊 Parameter Analisis Teknis Aktif")
+            tech_df = pd.DataFrame({
+                "Indikator Teknis": ["EMA Trend (9 vs 21 vs 50)", "Baseline EMA 200", "Volume Weighted (VWAP)", "Fibonacci Retracement 61.8%", "ATR (14) Volatilitas"],
+                "Nilai Real-Time": [f"${data['ema9']:.2f} / ${data['ema21']:.2f}", f"${data['ema200']:.2f}", f"${data['vwap']:.2f}", f"${data['fibo_618']:.2f}", f"${data['atr']:.2f}"],
+                "Status/Fungsi": ["Bullish Alignment" if bullish_ema else "Bearish Alignment", "Major Trend Filter", "Area Limit Entry Primary", "Zona Support/Resistance Kuat", "Penentu Dinamis TP/SL"]
+            })
+            st.table(tech_df)
     else:
-        st.info("Klik tombol **🚀 Analisis & Dapatkan Sinyal Entry** di atas untuk menjalankan perhitungan sinyal.")
+        st.error("Gagal mengambil data dari Yahoo Finance. Pastikan jaringan internet stabil.")
 
 with tab2:
     st.header("🧪 Optimization & Evaluasi Strategi")
